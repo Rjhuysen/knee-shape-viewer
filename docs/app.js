@@ -390,12 +390,24 @@ function syncHTML(mm) {
 // ------------------------------------------------------------------ XR panel (Babylon GUI on a floating plane)
 function buildXRPanel() {
   const W = 0.46, H = 0.66, RES = 1600;
-  const handle = B.MeshBuilder.CreateBox('panelHandle', { width: W * 0.6, height: 0.03, depth: 0.02 }, scene);
+  const handle = B.MeshBuilder.CreateBox('panelHandle', { width: W * 0.7, height: 0.045, depth: 0.025 }, scene);
   handle.material = emissive('handleMat', '#5fb3ff', 0.9);
   handle.isNearGrabbable = true;
+  handle.rotationQuaternion = B.Quaternion.Identity();
+  // The panel must NOT be a child of the handle: the drag behaviour also reacts to presses on descendants,
+  // which made every slider/button press move the panel. It follows the handle every frame instead.
+  const follower = new B.TransformNode('panelFollower', scene);
+  follower.rotationQuaternion = B.Quaternion.Identity();
   const plane = B.MeshBuilder.CreatePlane('panel', { width: W, height: H }, scene);
-  plane.parent = handle; plane.position.y = -H / 2 - 0.025;
+  plane.parent = follower; plane.position.y = -H / 2 - 0.03;
   plane.isNearPickable = true;
+  scene.onBeforeRenderObservable.add(() => {
+    const on = handle.isEnabled();
+    if (follower.isEnabled() !== on) follower.setEnabled(on);
+    if (!on) return;
+    follower.position.copyFrom(handle.position);
+    follower.rotationQuaternion.copyFrom(handle.rotationQuaternion);
+  });
   const adt = G.AdvancedDynamicTexture.CreateForMesh(plane, Math.round(RES * W / H), RES);
   const drag = new B.SixDofDragBehavior();
   drag.rotateWithMotionController = false;   // keep the panel upright
@@ -449,7 +461,7 @@ function buildXRPanel() {
       sliderPage = Math.min(sliderPage, pages - 1);
       if (!act.length) content.addControl(txt('No inputs selected.\nOpen "Inputs" to choose measurements.', '200px', 34, '#9aa3ad'));
       for (const j of act.slice(sliderPage * PER_PAGE, (sliderPage + 1) * PER_PAGE)) {
-        const m = meas[j], [lo, hi] = sliderRange(m), step = m.unit === 'mm' && m.sd > 10 ? 2 : 0.5;
+        const m = meas[j], [lo, hi] = sliderRange(m), step = (hi - lo) / 20;   // 20 presses = full range
         const head = new G.Grid(); head.height = '62px'; head.addColumnDefinition(0.62); head.addColumnDefinition(0.38);
         const name = txt(`${m.key}  ·  ${m.name}`, '62px', 30); name.textHorizontalAlignment = G.Control.HORIZONTAL_ALIGNMENT_LEFT;
         const value = txt('', '62px', 36, '#5fb3ff'); value.textHorizontalAlignment = G.Control.HORIZONTAL_ALIGNMENT_RIGHT;
