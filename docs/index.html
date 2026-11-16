@@ -56,13 +56,11 @@
         <div class="about">
           <p>Shape = population mean + <code>C<sub>VA</sub> C<sub>AA</sub><sup>−1</sup>(x<sub>A</sub> − μ<sub>A</sub>)</code>:
             ordinary least squares from the ticked measurements A to all 310 SSM modes (femur + tibia, 4,798 vertices),
-            fitted on 305 cases. Only aggregate statistics (means, covariances) are stored in this app.</p>
+            fitted on 305 cases. The app contains only this OLS relationship (mean shape, measurement–vertex and measurement–measurement covariances); the SSM itself (modes, eigenvalues, per-case data) is not included.</p>
           <p>Hold-out error (notebook <code>Measurements2SSM_Flexion</code>): mean shape ≈ 16 mm; FL + Flexion + HKA + TL ≈ 5.3 mm;
             all 27 ≈ 3.3 mm point-to-point RMSE.</p>
           <p>Flexion is computed on the meshes (shaft axes in the sagittal plane), not taken from the clinical table.</p>
           <p>Moving one slider while many correlated measurements stay fixed can give implausible shapes. Watch the plausibility indicator.</p>
-          <p id="modelSource"></p>
-          <button id="forgetModel">Remove stored model from this browser</button>
         </div>
       </details>
     </aside>

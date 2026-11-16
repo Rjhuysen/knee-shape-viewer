@@ -4,25 +4,22 @@ A small WebXR viewer for the HoloLens 2 (it also works in a desktop browser). Yo
 see the femur–tibia shape a statistical shape model (SSM) predicts. You can grab and move the bones, compare them with the
 population-mean shape, and show measurement overlays (HKA axes, flexion axes, femur/tibia lengths).
 
-**The shape model is not part of this repository.** The app only contains code. The model file
-`knee_shape_model.ksv` is generated locally and loaded by the user, and it is listed in `.gitignore`.
+**What is (not) published.** `docs/model/knee_shape_model.ksv` holds only the *OLS relationship*: the mean shape,
+faces, the measurement–vertex covariance `C_VX` and the 27×27 measurement covariance `C_XX`, plus per-measurement
+mean/SD/range and landmark indices. The statistical shape model itself (`ssmV`, eigenvectors/eigenvalues, mode weights)
+and all per-case data are never exported. `ssmV` is used only locally in `export_model.py` to compute `C_VX`.
 
 ## Using it
 
-1. Generate the model file (from the folder that holds `SSM_femtib.mat` etc.):
-   ```
-   python HoloLensViewer/export_model.py
-   ```
-   This writes `docs/data/knee_shape_model.ksv` (about 1.7 MB).
-2. Open the app:
-   - **Hosted (GitHub Pages):** open the Pages URL, click *Choose model file…* and select `knee_shape_model.ksv`.
-     The file is then cached in that browser (IndexedDB), so you only do this once per device.
-     *About the model → Remove stored model* deletes the cached copy.
-   - **Local:** `python -m http.server 8000` inside `docs/`, then open http://localhost:8000. The model loads
-     automatically from `docs/data/`. WebXR needs HTTPS, so this route is for the desktop only.
-3. **On the HoloLens 2:** copy `knee_shape_model.ksv` to the HoloLens first, for example over USB in File Explorer
-   (*HoloLens → Internal storage → Documents*) or through OneDrive. Then open the Pages URL in Edge, load the file,
-   and press the goggles button (bottom right) to enter mixed reality.
+- **HoloLens 2:** open https://rjhuysen.github.io/knee-shape-viewer/ in Edge and press the goggles button (bottom right)
+  to enter mixed reality.
+- **Desktop:** open the same link, or run `python -m http.server 8000` in `docs/` and open http://localhost:8000
+  (WebXR needs HTTPS, so mixed reality only works through the hosted link).
+- **Updating the model:** after the SSM or the measurements change, run (from the folder with `SSM_femtib.mat` etc.)
+  ```
+  python HoloLensViewer/export_model.py
+  ```
+  then commit and push `docs/model/knee_shape_model.ksv`.
 
 ## In mixed reality
 

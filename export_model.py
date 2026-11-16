@@ -1,8 +1,10 @@
 """Export the measurement -> shape model for the HoloLens / WebXR viewer.
 
-Writes docs/data/knee_shape_model.ksv (git-ignored: the shape model is NOT published with the app).
+Writes docs/model/knee_shape_model.ksv, which is published with the app. It contains ONLY the OLS relationship:
+mean shape, faces, C_VX (measurement-vertex covariance), C_XX, per-measurement mean/SD/range and landmark indices.
+The SSM itself (ssmV, Evec, Eval, Modes, per-case weights or measurements) is never written.
 
-Only AGGREGATE statistics are exported (means, SDs, ranges, covariances), no per-case rows.
+Only AGGREGATE statistics are exported (means, SDs, ranges, covariances), no per-case rows and no SSM modes.
 The viewer predicts a shape with ordinary least squares on any subset A of measurements:
 
     V(x_A) = mean_V + C_VA C_AA^-1 (x_A - mu_A)
@@ -19,7 +21,7 @@ import numpy as np
 import scipy.io as sio
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = Path(__file__).resolve().parent / 'docs' / 'data'
+OUT = Path(__file__).resolve().parent / 'docs' / 'model'
 OUT.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------- data (same as Measurements2SSM_Flexion.ipynb)
@@ -161,9 +163,13 @@ meta = {
     'hkaSign': sgn,
     'validation': valid,
 }
-# single bundle: b'KSV1' | uint32 json length | json (space-padded to a multiple of 4) | binary blob
-js = json.dumps(meta, separators=(',', ':')).encode()
-js += b' ' * (-len(js) % 4)
-bundle = b'KSV1' + np.uint32(len(js)).astype('<u4').tobytes() + js + blob
-(OUT / 'knee_shape_model.ksv').write_bytes(bundle)
-print(f'wrote {OUT / "knee_shape_model.ksv"} ({len(bundle) / 1e6:.2f} MB)  -- keep this file private, it is git-ignored')
+# bundle format: b'KSV1' | uint32 json length | json (space-padded to a multiple of 4) | binary blob
+def write_bundle(path, meta_, blob_):
+    js = json.dumps(meta_, separators=(',', ':')).encode()
+    js += b' ' * (-len(js) % 4)
+    path.write_bytes(b'KSV1' + np.uint32(len(js)).astype('<u4').tobytes() + js + blob_)
+    print(f'wrote {path} ({path.stat().st_size / 1e6:.2f} MB)')
+
+# Public bundle: only the OLS relationship + mean shape. ssmV / Evec / Eval / Modes / weights / measurements per case
+# are NOT written (they are only used above, locally, to compute C_VX = ssmV @ Cov(W, X)).
+write_bundle(OUT / 'knee_shape_model.ksv', meta, blob)

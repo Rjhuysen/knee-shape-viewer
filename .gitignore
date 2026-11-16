@@ -1,6 +1,7 @@
-# The shape model (derived from patient data) must never be published.
+# Never publish the shape model itself (ssmV, modes, eigenvalues, per-case data).
+# Only docs/model/knee_shape_model.ksv (OLS relationship + mean shape) is public.
 *.ksv
-docs/data/
+!docs/model/knee_shape_model.ksv
 *.mat
 *.npy
 __pycache__/

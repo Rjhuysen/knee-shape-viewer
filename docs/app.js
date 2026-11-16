@@ -89,7 +89,8 @@ let xrPanel = null, xrHelper = null, inXR = false;
 
 // ------------------------------------------------------------------ model
 function predict() {
-  const m = S.meta.measurements, A = [...S.active].sort((a, b) => a - b), nM = S.nM;
+  const m = S.meta.measurements, nM = S.nM;
+  const A = [...S.active].sort((a, b) => a - b);
   const CXX = S.meta.C_XX, d = A.map(j => S.input[j] - m[j].mean);
   const alpha = A.length ? solve(A.map(i => A.map(j => CXX[i][j])), d) : [];
   // conditional expectation of the unticked measurements (same alpha)
@@ -354,10 +355,6 @@ function buildHTML() {
   });
   document.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => preset(b.dataset.preset)));
   document.getElementById('resetValues').addEventListener('click', resetValues);
-  document.getElementById('modelSource').textContent = `Model loaded from: ${S.source}.`;
-  document.getElementById('forgetModel').addEventListener('click', async () => {
-    await cacheClear(); document.getElementById('modelSource').textContent = 'Stored copy removed from this browser.';
-  });
   const tg = document.getElementById('toggles');
   for (const [key, label, color] of TOGGLES) {
     const l = document.createElement('label');
@@ -548,24 +545,8 @@ function placeForUser() {
 }
 
 // ------------------------------------------------------------------ boot
-// The model file is NOT published with the app. It is loaded from (1) data/ when served locally,
-// (2) this browser's IndexedDB cache, or (3) a file the user picks once (then cached).
-const DB = { name: 'kneeShapeViewer', store: 'files', key: 'model' };
-function idb(mode, fn) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB.name, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(DB.store);
-    req.onerror = () => reject(req.error);
-    req.onsuccess = () => {
-      const tx = req.result.transaction(DB.store, mode), r = fn(tx.objectStore(DB.store));
-      tx.oncomplete = () => resolve(r && r.result); tx.onerror = () => reject(tx.error);
-    };
-  });
-}
-const cacheGet = () => idb('readonly', s => s.get(DB.key)).catch(() => null);
-const cachePut = buf => idb('readwrite', s => s.put(buf, DB.key)).catch(() => null);
-const cacheClear = () => idb('readwrite', s => s.delete(DB.key)).catch(() => null);
-
+// The bundle holds only the OLS relationship (mean shape, C_VX, C_XX, measurement stats, landmarks).
+// The SSM itself (ssmV, eigenvalues, mode weights, per-case data) is never exported.
 function parseBundle(buf) {
   const head = new Uint8Array(buf, 0, 4);
   if (String.fromCharCode(...head) !== 'KSV1') throw new Error('not a knee_shape_model.ksv file');
@@ -574,38 +555,10 @@ function parseBundle(buf) {
   return { meta, bin: buf.slice(8 + jl) };
 }
 
-async function obtainBundle() {
-  try {
-    const r = await fetch('data/knee_shape_model.ksv');
-    if (r.ok) return { buf: await r.arrayBuffer(), src: 'local folder' };
-  } catch (e) { /* not served locally */ }
-  const cached = await cacheGet();
-  if (cached) return { buf: cached, src: 'browser cache' };
-  // ask the user for the file
-  const box = document.getElementById('loading');
-  box.innerHTML = `<div class="picker"><h2>Load the shape model</h2>
-    <p>The model file is not published with this app. Choose <b>knee_shape_model.ksv</b>
-    (made with <code>export_model.py</code>) or drop it here. It is then kept in this browser only.</p>
-    <label class="filebtn">Choose model file…<input type="file" accept=".ksv,application/octet-stream" hidden></label>
-    <p class="err"></p></div>`;
-  return new Promise(resolve => {
-    const take = async file => {
-      try {
-        const buf = await file.arrayBuffer(); parseBundle(buf);
-        await cachePut(buf); resolve({ buf, src: 'file' });
-      } catch (e) { box.querySelector('.err').textContent = 'Could not read this file: ' + e.message; }
-    };
-    box.querySelector('input').addEventListener('change', e => e.target.files[0] && take(e.target.files[0]));
-    box.addEventListener('dragover', e => e.preventDefault());
-    box.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files[0]) take(e.dataTransfer.files[0]); });
-  });
-}
-
 async function loadModel() {
-  const { buf, src } = await obtainBundle();
-  const { meta, bin } = parseBundle(buf);
-  S.source = src;
-  document.getElementById('loading').textContent = 'Loading model…';
+  const r = await fetch('model/knee_shape_model.ksv');
+  if (!r.ok) throw new Error(`model file not found (HTTP ${r.status}); run export_model.py`);
+  const { meta, bin } = parseBundle(await r.arrayBuffer());
   S.meta = meta; S.nM = meta.nMeas;
   S.meanV = new Float32Array(bin, meta.bin.meanV[0], meta.bin.meanV[1]);
   S.CVX = new Float32Array(bin, meta.bin.C_VX[0], meta.bin.C_VX[1]);
