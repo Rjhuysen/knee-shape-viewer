@@ -1,0 +1,6 @@
+# The shape model (derived from patient data) must never be published.
+*.ksv
+docs/data/
+*.mat
+*.npy
+__pycache__/

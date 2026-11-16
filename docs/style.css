@@ -1,0 +1,73 @@
+:root {
+  --bg: #12151a;
+  --panel: #1a1e25;
+  --line: #2b313b;
+  --text: #e6e8eb;
+  --muted: #9aa3ad;
+  --accent: #5fb3ff;
+  --active: #2a3a4f;
+  --warn: #ffb74d;
+  --bad: #ff6b6b;
+  --ok: #7bd88f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+#app { display: flex; height: 100vh; }
+#view { position: relative; flex: 1; min-width: 0; }
+#renderCanvas { width: 100%; height: 100%; display: block; outline: none; }
+#loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 16px; }
+.picker { max-width: 440px; padding: 24px; margin: 16px; background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; color: var(--text); }
+.picker h2 { margin: 0 0 8px; font-size: 18px; }
+.picker p { color: var(--muted); font-size: 13px; }
+.picker .err { color: var(--bad); }
+.filebtn { display: inline-block; padding: 12px 18px; background: #2f5d8a; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 16px; }
+#xrHint { position: absolute; left: 12px; bottom: 12px; color: var(--muted); font-size: 12px; max-width: 60%; }
+
+#panel { width: 420px; flex: none; overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line); padding: 14px 16px 40px; }
+h1 { font-size: 18px; margin: 0; }
+.sub { margin: 2px 0 10px; color: var(--muted); font-size: 12px; }
+details { border-top: 1px solid var(--line); padding: 8px 0; }
+summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px; }
+.btnrow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+button { background: #252b34; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+
+.plaus { font-size: 12px; padding: 6px 8px; border-radius: 6px; margin-bottom: 8px; background: #20252d; }
+.plaus.ok { border-left: 3px solid var(--ok); }
+.plaus.warn { border-left: 3px solid var(--warn); }
+.plaus.bad { border-left: 3px solid var(--bad); }
+
+.meas { display: grid; grid-template-columns: 22px 1fr 74px; grid-template-rows: auto auto; column-gap: 6px; align-items: center;
+  padding: 5px 6px; border-radius: 6px; }
+.meas.on { background: var(--active); }
+.meas input[type=checkbox] { grid-row: 1 / span 2; width: 16px; height: 16px; accent-color: var(--accent); }
+.meas .lbl { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meas .lbl b { font-weight: 600; margin-right: 4px; }
+.meas .lbl span { color: var(--muted); font-size: 11px; }
+.meas .val { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+.meas input[type=range] { grid-column: 2 / span 2; width: 100%; accent-color: var(--accent); margin: 2px 0 0; }
+.meas:not(.on) .val { color: var(--muted); font-style: italic; }
+.meas:not(.on) input[type=range] { opacity: .45; }
+
+.toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.toggles label { display: flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; }
+.toggles .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.legend { margin-top: 10px; }
+.legend .bar { height: 10px; border-radius: 3px; background: linear-gradient(90deg, #3b73f2, #f2f2f2, #e5403a); }
+.legend .ticks { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); text-align: center; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+th { text-align: right; color: var(--muted); font-weight: 500; font-size: 12px; }
+td { text-align: right; padding: 2px 0; border-bottom: 1px solid var(--line); }
+td:first-child, th:first-child { text-align: left; }
+.about p { font-size: 12px; color: var(--muted); }
+code { font-size: 11px; }
+
+@media (max-width: 800px) {
+  #app { flex-direction: column; height: auto; }
+  #view { height: 60vh; flex: none; }
+  #panel { width: 100%; border-left: none; padding: 12px 16px 40px; }
+}
