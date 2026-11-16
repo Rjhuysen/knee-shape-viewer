@@ -6,6 +6,7 @@
  */
 'use strict';
 const B = BABYLON, G = BABYLON.GUI;
+const VERSION = 5;   // shown in the UI so you can see whether the headset runs the latest version
 
 // ------------------------------------------------------------------ small vector helpers (SSM frame)
 const vsub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -389,29 +390,32 @@ function syncHTML(mm) {
 
 // ------------------------------------------------------------------ XR panel (Babylon GUI on a floating plane)
 function buildXRPanel() {
-  const W = 0.46, H = 0.66, RES = 1600;
-  const handle = B.MeshBuilder.CreateBox('panelHandle', { width: W * 0.7, height: 0.045, depth: 0.025 }, scene);
-  handle.material = emissive('handleMat', '#5fb3ff', 0.9);
-  handle.isNearGrabbable = true;
-  handle.rotationQuaternion = B.Quaternion.Identity();
-  // The panel must NOT be a child of the handle: the drag behaviour also reacts to presses on descendants,
-  // which made every slider/button press move the panel. It follows the handle every frame instead.
-  const follower = new B.TransformNode('panelFollower', scene);
-  follower.rotationQuaternion = B.Quaternion.Identity();
+  // HoloLens 2 sees only ~43° x 29°: keep the panel ~29° wide at 0.7 m. Texture: 1115 x 1300 px.
+  const W = 0.36, H = 0.42, RES = 1300;
+  // No dragging: the panel "lazily follows" the user (like HoloLens system menus). It stays still while it is in
+  // view and glides back when you turn away. "Pin" freezes it in place. Following pauses while a press is active.
+  const node = new B.TransformNode('panelNode', scene);
+  node.rotationQuaternion = B.Quaternion.Identity();
   const plane = B.MeshBuilder.CreatePlane('panel', { width: W, height: H }, scene);
-  plane.parent = follower; plane.position.y = -H / 2 - 0.03;
+  plane.parent = node; plane.position.x = -0.12;          // slightly left of the follow centre; model goes right
   plane.isNearPickable = true;
-  scene.onBeforeRenderObservable.add(() => {
-    const on = handle.isEnabled();
-    if (follower.isEnabled() !== on) follower.setEnabled(on);
-    if (!on) return;
-    follower.position.copyFrom(handle.position);
-    follower.rotationQuaternion.copyFrom(handle.rotationQuaternion);
-  });
   const adt = G.AdvancedDynamicTexture.CreateForMesh(plane, Math.round(RES * W / H), RES);
-  const drag = new B.SixDofDragBehavior();
-  drag.rotateWithMotionController = false;   // keep the panel upright
-  handle.addBehavior(drag);
+  const follow = new B.FollowBehavior();
+  Object.assign(follow, { defaultDistance: 0.7, minimumDistance: 0.5, maximumDistance: 0.9, maxViewHorizontalDegrees: 35,
+                          maxViewVerticalDegrees: 25, ignoreCameraPitchAndRoll: true, lerpTime: 700 });
+  let pinned = false, pressing = false;
+  scene.onPointerObservable.add(pi => {
+    if (pi.type === B.PointerEventTypes.POINTERDOWN && pi.pickInfo && pi.pickInfo.pickedMesh === plane) pressing = true;
+    if (pi.type === B.PointerEventTypes.POINTERUP) pressing = false;
+    follow._enabled = !pinned && !pressing;
+  });
+  const startFollowing = cam => {
+    node.setEnabled(true);
+    if (!node.behaviors.includes(follow)) node.addBehavior(follow);
+    follow.followedCamera = cam;
+    follow._enabled = !pinned;
+  };
+  const stopFollowing = () => { node.removeBehavior(follow); node.setEnabled(false); };
 
   const bg = new G.Rectangle('bg');
   Object.assign(bg, { background: '#1a1e25ee', color: '#5fb3ff', thickness: 3, cornerRadius: 24 });
@@ -434,13 +438,26 @@ function buildXRPanel() {
     return tb;
   };
 
-  const title = txt('Knee Shape Viewer', '60px', 44); outer.addControl(title);
+  const head = new G.Grid('head'); head.height = '96px';
+  head.addColumnDefinition(0.62); head.addColumnDefinition(0.38);
+  const title = txt(`Knee Shape Viewer  v${VERSION}`, '96px', 40); title.textHorizontalAlignment = G.Control.HORIZONTAL_ALIGNMENT_LEFT;
+  title.paddingLeft = '16px';
+  const pinBtn = btn('', '100%', '92px', () => {
+    pinned = !pinned; follow._enabled = !pinned; setPinLabel();
+  }, 34);
+  const setPinLabel = () => {
+    pinBtn.textBlock.text = pinned ? '📌 Pinned (tap to follow)' : 'Pin panel here';
+    pinBtn.background = pinned ? '#2f5d8a' : '#252b34';
+  };
+  setPinLabel();
+  head.addControl(title, 0, 0); head.addControl(pinBtn, 0, 1);
+  outer.addControl(head);
   const tabs = new G.StackPanel('tabs'); tabs.isVertical = false; tabs.height = '100px'; outer.addControl(tabs);
   const plaus = txt('', '90px', 28, '#9aa3ad'); outer.addControl(plaus);
   const content = new G.StackPanel('content'); content.width = '100%'; outer.addControl(content);
 
   let page = 'sliders', sliderPage = 0;
-  const PER_PAGE = 6;
+  const PER_PAGE = 4;
   const tabBtns = {};
   for (const [id, label] of [['sliders', 'Sliders'], ['select', 'Inputs'], ['display', 'Display']]) {
     tabBtns[id] = btn(label, '360px', '96px', () => { page = id; render(); refresh(); }, 38);
@@ -487,9 +504,9 @@ function buildXRPanel() {
       }
     } else if (page === 'select') {
       content.addControl(txt('Tap to use a measurement as input', '60px', 30, '#9aa3ad'));
-      const grid = new G.Grid(); grid.height = `${Math.ceil(meas.length / 3) * 92}px`;
+      const grid = new G.Grid(); grid.height = `${Math.ceil(meas.length / 3) * 84}px`;
       for (let c = 0; c < 3; c++) grid.addColumnDefinition(1 / 3);
-      for (let r = 0; r < Math.ceil(meas.length / 3); r++) grid.addRowDefinition(92, true);
+      for (let r = 0; r < Math.ceil(meas.length / 3); r++) grid.addRowDefinition(84, true);
       meas.forEach((m, j) => {
         const b = btn(m.key, '100%', '100%', () => { setActive(j, !S.active.has(j)); render(); }, 32);
         b.background = S.active.has(j) ? '#2f5d8a' : '#252b34';
@@ -513,14 +530,18 @@ function buildXRPanel() {
         grid.addControl(b, Math.floor(i / 2), i % 2);
       });
       content.addControl(grid);
-      content.addControl(txt('Model size', '60px', 30, '#9aa3ad'));
+      content.addControl(txt('Model size', '50px', 30, '#9aa3ad'));
       const sc = new G.StackPanel(); sc.isVertical = false; sc.height = '110px';
       for (const [l, s] of [['Life size', 1], ['1 : 2', 0.5], ['1 : 4', 0.25]]) sc.addControl(btn(l, '300px', '100px', () => setModelScale(s)));
       content.addControl(sc);
+      const rot = new G.StackPanel(); rot.isVertical = false; rot.height = '110px';
+      rot.addControl(btn('⟲ Turn 30°', '450px', '100px', () => turnModel(-30)));
+      rot.addControl(btn('Turn 30° ⟳', '450px', '100px', () => turnModel(30)));
+      content.addControl(rot);
       content.addControl(btn('Bring model and panel in front of me', '100%', '100px', placeForUser));
-      content.addControl(txt('Grab the bones to move/rotate them (pinch or air-tap and hold). ' +
-                             'Grab the blue bar above this panel to move the panel.', '140px', 28, '#9aa3ad'));
-      const mt = txt('', '170px', 30, '#e6e8eb'); mt.name = 'meshText'; content.addControl(mt);
+      content.addControl(txt('Grab the bones to move/rotate them (pinch and hold); use two hands to resize. ' +
+                             'This panel follows you; press "Pin panel here" to leave it in place.', '120px', 28, '#9aa3ad'));
+      const mt = txt('', '110px', 30, '#e6e8eb'); mt.name = 'meshText'; content.addControl(mt);
     }
     if (lastMM) sync(lastMM);
   }
@@ -538,11 +559,15 @@ function buildXRPanel() {
   }
 
   render();
-  handle.setEnabled(false);
-  return { handle, sync, render, setPage(p) { page = p; render(); } };
+  node.setEnabled(false);
+  return { node, sync, render, startFollowing, stopFollowing, setPage(p) { page = p; render(); } };
 }
 
 function setModelScale(s) { root.scaling.setAll(0.001 * s); }
+function turnModel(deg) {                    // rotate the bones about the vertical axis through their own centre
+  if (!root.rotationQuaternion) root.rotationQuaternion = B.Quaternion.FromEulerVector(root.rotation);
+  root.rotationQuaternion = B.Quaternion.RotationAxis(B.Axis.Y, deg * Math.PI / 180).multiply(root.rotationQuaternion);
+}
 
 function placeForUser() {
   const cam = scene.activeCamera;
@@ -550,11 +575,11 @@ function placeForUser() {
   const right = B.Vector3.Cross(B.Axis.Y, fwd).normalize();
   const head = cam.globalPosition.clone();
   const yaw = Math.atan2(fwd.x, fwd.z);
-  root.position = head.add(fwd.scale(1.0)).add(right.scale(0.25)).add(new B.Vector3(0, -0.25, 0));
+  root.position = head.add(fwd.scale(1.0)).add(right.scale(0.3)).add(new B.Vector3(0, -0.25, 0));
   root.rotationQuaternion = B.Quaternion.FromEulerAngles(0, yaw, 0);
   if (xrPanel) {
-    xrPanel.handle.position = head.add(fwd.scale(0.6)).add(right.scale(-0.35)).add(new B.Vector3(0, 0.05, 0));
-    xrPanel.handle.rotationQuaternion = B.Quaternion.FromEulerAngles(0, yaw, 0);
+    xrPanel.node.position = head.add(fwd.scale(0.7)).add(new B.Vector3(0, -0.05, 0));
+    xrPanel.node.rotationQuaternion = B.Quaternion.FromEulerAngles(0, yaw, 0);
   }
 }
 
@@ -642,9 +667,9 @@ async function main() {
   buildHTML();
   xrPanel = buildXRPanel();
   if (new URLSearchParams(location.search).has('panel')) {     // debug: show the HoloLens panel on desktop
-    xrPanel.handle.setEnabled(true);
-    xrPanel.handle.position.set(-0.42, 0.33, 0);
-    const page = new URLSearchParams(location.search).get('panel');
+    const q = new URLSearchParams(location.search), page = q.get('panel');
+    if (q.has('follow')) xrPanel.startFollowing(cam);          // test the lazy-follow behaviour with the desktop camera
+    else { xrPanel.node.setEnabled(true); xrPanel.node.position.set(-0.18, -0.03, 0); }
     if (page) xrPanel.setPage(page);
   }
   await setupXR();
@@ -681,14 +706,13 @@ async function setupXR() {
       inXR = true;
       scene.clearColor = new B.Color4(0, 0, 0, 0);   // transparent = see-through on HoloLens
       setModelScale(0.5);
-      xrPanel.handle.setEnabled(true);
       root.addBehavior(drag); root.addBehavior(pinch);
-      setTimeout(placeForUser, 400);
+      setTimeout(() => { placeForUser(); xrPanel.startFollowing(xrHelper.baseExperience.camera); }, 400);
     } else if (st === B.WebXRState.NOT_IN_XR && inXR) {
       inXR = false;
       scene.clearColor = new B.Color4(0.07, 0.08, 0.1, 1);
       root.removeBehavior(drag); root.removeBehavior(pinch);
-      xrPanel.handle.setEnabled(false);
+      xrPanel.stopFollowing();
       root.position.setAll(0); root.rotationQuaternion = null; root.rotation.setAll(0); setModelScale(1);
     }
   });
