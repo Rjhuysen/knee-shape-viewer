@@ -6,7 +6,7 @@
  */
 'use strict';
 const B = BABYLON, G = BABYLON.GUI;
-const VERSION = 6;   // shown in the UI so you can see whether the headset runs the latest version
+const VERSION = 7;   // shown in the UI so you can see whether the headset runs the latest version
 
 // ------------------------------------------------------------------ small vector helpers (SSM frame)
 const vsub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -392,19 +392,38 @@ function syncHTML(mm) {
 function buildXRPanel() {
   // HoloLens 2 sees only ~43° x 29°: panel 0.30 x 0.35 m at ~0.8 m (~21° x 25°). Texture: 1115 x 1300 px.
   const W = 0.30, H = 0.35, RES = 1300;
-  // No dragging. The panel is placed a little to the left of the bones, facing you (placePanel). It stays where it
-  // is while you work; only if it has been far out of view for a while (you turned away) is it brought back.
-  // "Pin" switches that off.
-  const node = new B.TransformNode('panelNode', scene);
+  // The panel is placed a little to the left of the bones, facing you (placePanel). To move it, grab the bar BELOW
+  // the panel. The bar is a separate mesh and the panel only copies its pose every frame: the panel must NOT be a
+  // child of the bar, because the drag behaviour also reacts to presses on children (that made buttons move the
+  // panel). After a manual move the panel is pinned. Unpinned, it comes back if it has been out of view for a while.
+  const BAR_GAP = H / 2 + 0.04;              // bar centre sits this far below the panel centre
+  const node = B.MeshBuilder.CreateBox('panelBar', { width: W * 0.8, height: 0.045, depth: 0.03 }, scene);
+  node.material = emissive('panelBarMat', '#5fb3ff', 0.85);
   node.rotationQuaternion = B.Quaternion.Identity();
+  node.isNearGrabbable = true;
+  const barLabel = makeLabel('panelBarLbl', '#e6e8eb');           // "grab here" hint on the bar
+  Object.assign(barLabel, { parent: node, billboardMode: B.Mesh.BILLBOARDMODE_NONE, renderingGroupId: 0 });
+  barLabel.scaling.setAll(0.001 * 1.6); barLabel.position.z = -0.016; barLabel.rotation.y = 0;
+  barLabel.metadata.set('✥ grab to move');
+  const follower = new B.TransformNode('panelFollower', scene);
+  follower.rotationQuaternion = B.Quaternion.Identity();
   const plane = B.MeshBuilder.CreatePlane('panel', { width: W, height: H }, scene);
-  plane.parent = node;
+  plane.parent = follower; plane.position.y = BAR_GAP;
   plane.isNearPickable = true;
   const adt = G.AdvancedDynamicTexture.CreateForMesh(plane, Math.round(RES * W / H), RES);
+  const drag = new B.SixDofDragBehavior();
+  Object.assign(drag, { rotateWithMotionController: false, rotateDraggedObject: false });
+  node.addBehavior(drag);
+  const faceUser = () => { node.rotationQuaternion = facing(node.position, scene.activeCamera.globalPosition); };
+  drag.onPositionChangedObservable.add(faceUser);
+  drag.onDragEndObservable.add(() => { faceUser(); pinned = true; setPinLabel(); });
   let pinned = false, outSince = 0;
   scene.onBeforeRenderObservable.add(() => {
-    if (!inXR || pinned || !node.isEnabled()) { outSince = 0; return; }
-    const cam = scene.activeCamera, to = node.position.subtract(cam.globalPosition).normalize();
+    const on = node.isEnabled();
+    if (follower.isEnabled() !== on) follower.setEnabled(on);
+    follower.position.copyFrom(node.position); follower.rotationQuaternion.copyFrom(node.rotationQuaternion);
+    if (!inXR || pinned || !on || drag.dragging) { outSince = 0; return; }
+    const cam = scene.activeCamera, to = plane.getAbsolutePosition().subtract(cam.globalPosition).normalize();
     const ang = Math.acos(Math.max(-1, Math.min(1, B.Vector3.Dot(cam.getDirection(B.Axis.Z), to)))) * 180 / Math.PI;
     if (ang < 55) { outSince = 0; return; }
     if (!outSince) outSince = performance.now();
@@ -451,7 +470,6 @@ function buildXRPanel() {
   const content = new G.StackPanel('content'); content.width = '100%'; outer.addControl(content);
 
   let page = 'sliders', sliderPage = 0;
-  const PER_PAGE = 4;
   const tabBtns = {};
   for (const [id, label] of [['sliders', 'Sliders'], ['select', 'Inputs'], ['display', 'Display']]) {
     tabBtns[id] = btn(label, '360px', '96px', () => { page = id; render(); refresh(); }, 38);
@@ -467,33 +485,36 @@ function buildXRPanel() {
     for (const [id, b] of Object.entries(tabBtns)) b.background = id === page ? '#2f5d8a' : '#252b34';
     const meas = S.meta.measurements;
     if (page === 'sliders') {
+      // one compact row per input:  name | − | slider | + | value. Up to 9 rows fit; paging only beyond that.
       const act = [...S.active].sort((a, b) => a - b);
-      const pages = Math.max(1, Math.ceil(act.length / PER_PAGE));
+      const per = act.length <= 9 ? 9 : 8;
+      const pages = Math.max(1, Math.ceil(act.length / per));
       sliderPage = Math.min(sliderPage, pages - 1);
       if (!act.length) content.addControl(txt('No inputs selected.\nOpen "Inputs" to choose measurements.', '200px', 34, '#9aa3ad'));
-      for (const j of act.slice(sliderPage * PER_PAGE, (sliderPage + 1) * PER_PAGE)) {
+      for (const j of act.slice(sliderPage * per, (sliderPage + 1) * per)) {
         const m = meas[j], [lo, hi] = sliderRange(m), step = (hi - lo) / 20;   // 20 presses = full range
-        const head = new G.Grid(); head.height = '62px'; head.addColumnDefinition(0.62); head.addColumnDefinition(0.38);
-        const name = txt(`${m.key}  ·  ${m.name}`, '62px', 30); name.textHorizontalAlignment = G.Control.HORIZONTAL_ALIGNMENT_LEFT;
-        const value = txt('', '62px', 36, '#5fb3ff'); value.textHorizontalAlignment = G.Control.HORIZONTAL_ALIGNMENT_RIGHT;
-        head.addControl(name, 0, 0); head.addControl(value, 0, 1);
-        const row = new G.StackPanel(); row.isVertical = false; row.height = '110px';
-        const minus = btn('−', '110px', '100px', () => setInput(j, Math.max(lo, S.shown[j] - step)), 52);
-        const plus = btn('+', '110px', '100px', () => setInput(j, Math.min(hi, S.shown[j] + step)), 52);
+        const row = new G.Grid(); row.height = '104px';
+        for (const w of [190, 104, 0, 104, 170]) row.addColumnDefinition(w || 1, w > 0);
+        const name = txt(m.key, '100px', 34); name.textHorizontalAlignment = G.Control.HORIZONTAL_ALIGNMENT_LEFT;
+        name.paddingLeft = '10px';
+        const minus = btn('−', '100%', '100%', () => setInput(j, S.shown[j] - step), 52);
+        const plus = btn('+', '100%', '100%', () => setInput(j, S.shown[j] + step), 52);
         const sl = new G.Slider();
-        Object.assign(sl, { minimum: lo, maximum: hi, value: S.shown[j], width: '820px', height: '100px', color: '#5fb3ff',
-                            background: '#39414d', thumbColor: '#e6e8eb', thumbWidth: '60px', barOffset: '30px', isThumbCircle: true });
-        sl.paddingLeft = sl.paddingRight = '16px';
+        Object.assign(sl, { minimum: lo, maximum: hi, value: S.shown[j], height: '96px', color: '#5fb3ff',
+                            background: '#39414d', thumbColor: '#e6e8eb', thumbWidth: '56px', barOffset: '30px', isThumbCircle: true });
+        sl.paddingLeft = sl.paddingRight = '14px';
         sl.onValueChangedObservable.add(v => { if (!syncing) setInput(j, v); });
-        row.addControl(minus); row.addControl(sl); row.addControl(plus);
-        content.addControl(head); content.addControl(row);
+        const value = txt('', '100px', 32, '#5fb3ff'); value.textHorizontalAlignment = G.Control.HORIZONTAL_ALIGNMENT_RIGHT;
+        value.paddingRight = '8px';
+        row.addControl(name, 0, 0); row.addControl(minus, 0, 1); row.addControl(sl, 0, 2); row.addControl(plus, 0, 3); row.addControl(value, 0, 4);
+        content.addControl(row);
         sliders.push({ j, sl, value });
       }
       if (pages > 1) {
         const nav = new G.StackPanel(); nav.isVertical = false; nav.height = '100px';
-        nav.addControl(btn('◀ prev', '300px', '90px', () => { sliderPage = (sliderPage + pages - 1) % pages; render(); refresh(); }));
-        nav.addControl(txt(`${sliderPage + 1} / ${pages}`, '90px', 32)).width = '200px';
-        nav.addControl(btn('next ▶', '300px', '90px', () => { sliderPage = (sliderPage + 1) % pages; render(); refresh(); }));
+        nav.addControl(btn('◀ previous', '420px', '92px', () => { sliderPage = (sliderPage + pages - 1) % pages; render(); refresh(); }));
+        nav.addControl(txt(`${sliderPage + 1} / ${pages}`, '92px', 32)).width = '180px';
+        nav.addControl(btn('next ▶', '420px', '92px', () => { sliderPage = (sliderPage + 1) % pages; render(); refresh(); }));
         content.addControl(nav);
       }
     } else if (page === 'select') {
@@ -528,13 +549,9 @@ function buildXRPanel() {
       const sc = new G.StackPanel(); sc.isVertical = false; sc.height = '110px';
       for (const [l, s] of [['Life size', 1], ['1 : 2', 0.5], ['1 : 4', 0.25]]) sc.addControl(btn(l, '300px', '100px', () => setModelScale(s)));
       content.addControl(sc);
-      const rot = new G.StackPanel(); rot.isVertical = false; rot.height = '110px';
-      rot.addControl(btn('⟲ Turn 30°', '450px', '100px', () => turnModel(-30)));
-      rot.addControl(btn('Turn 30° ⟳', '450px', '100px', () => turnModel(30)));
-      content.addControl(rot);
       content.addControl(btn('Bring model and panel in front of me', '100%', '100px', placeForUser));
-      content.addControl(txt('Grab the bones to move/rotate them (pinch and hold); use two hands to resize. ' +
-                             'If you turn away, this panel comes back after a moment; "Pin panel here" stops that.', '120px', 28, '#9aa3ad'));
+      content.addControl(txt('Bones: pinch and hold with one hand to move/rotate, with two hands to rotate and resize. ' +
+                             'Panel: grab the blue bar under it to move it.', '120px', 28, '#9aa3ad'));
       const mt = txt('', '110px', 30, '#e6e8eb'); mt.name = 'meshText'; content.addControl(mt);
     }
     if (lastMM) sync(lastMM);
@@ -554,18 +571,14 @@ function buildXRPanel() {
 
   render();
   node.setEnabled(false);
-  return { node, sync, render, setPage(p) { page = p; render(); } };
+  return { node, barGap: BAR_GAP, sync, render, setPage(p) { page = p; render(); } };
 }
 
 function setModelScale(s) { root.scaling.setAll(0.001 * s); }
-function turnModel(deg) {                    // rotate the bones about the vertical axis through their own centre
-  if (!root.rotationQuaternion) root.rotationQuaternion = B.Quaternion.FromEulerVector(root.rotation);
-  root.rotationQuaternion = B.Quaternion.RotationAxis(B.Axis.Y, deg * Math.PI / 180).multiply(root.rotationQuaternion);
-}
 
 // Layout relative to the user's head (horizontal forward direction):
 //   bones: straight ahead, 1.2 m away, knee 5 cm below eye height (whole leg fits the ~29° vertical FOV at 1:2)
-//   panel: 0.75 m ahead, 0.32 m to the left (~23°), turned to face you; glance left to use it
+//   panel: 0.75 m ahead, 0.32 m to the left (~23°), centre 15 cm below eye height, facing you; glance left to use it
 function headFrame() {
   const cam = scene.activeCamera;
   const fwd = cam.getDirection(B.Axis.Z); fwd.y = 0; fwd.normalize();
@@ -575,9 +588,9 @@ function facing(pos, head) { const d = pos.subtract(head); return B.Quaternion.F
 function placePanel() {
   if (!xrPanel) return;
   const { head, fwd, right } = headFrame();
-  const pos = head.add(fwd.scale(0.75)).add(right.scale(-0.32)).add(new B.Vector3(0, -0.04, 0));
-  xrPanel.node.position = pos;
-  xrPanel.node.rotationQuaternion = facing(pos, head);
+  const centre = head.add(fwd.scale(0.75)).add(right.scale(-0.32)).add(new B.Vector3(0, -0.15, 0));
+  xrPanel.node.position = centre.add(new B.Vector3(0, -xrPanel.barGap, 0));   // node = grab bar under the panel
+  xrPanel.node.rotationQuaternion = facing(centre, head);
 }
 function placeForUser() {
   const { head, fwd } = headFrame();
@@ -653,6 +666,19 @@ async function main() {
   ghost = new B.Mesh('ghost', scene);
   const gd = new B.VertexData(); gd.positions = refPosB; gd.indices = S.faces; gd.normals = refNormB; gd.applyToMesh(ghost);
   ghost.parent = root; ghost.isPickable = false;
+
+  // invisible grab volume around the bones: at 1:2 the shafts are only ~1.5 cm wide, too thin to hit with two
+  // hand rays. As a child of the bones it triggers their (two-hand) drag/rotate/scale behaviours.
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < refPosB.length; i += 3) for (let a = 0; a < 3; a++) {
+    lo[a] = Math.min(lo[a], refPosB[i + a]); hi[a] = Math.max(hi[a], refPosB[i + a]);
+  }
+  const pad = 50;   // mm
+  const grab = B.MeshBuilder.CreateBox('grabVolume', { width: hi[0] - lo[0] + 2 * pad, height: hi[1] - lo[1] + 2 * pad,
+                                                       depth: hi[2] - lo[2] + 2 * pad }, scene);
+  grab.parent = root; grab.position.set((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
+  grab.visibility = 0; grab.isNearGrabbable = true;
+  grab.material = emissive('grabMat', '#ffffff', 0);
   ghostMat = new B.StandardMaterial('ghostMat', scene);
   Object.assign(ghostMat, { diffuseColor: B.Color3.FromHexString('#7fa7ff'), emissiveColor: B.Color3.FromHexString('#1d3566'), alpha: 0.3 });
   ghost.material = ghostMat;
@@ -673,7 +699,7 @@ async function main() {
     const q = new URLSearchParams(location.search), page = q.get('panel');
     xrPanel.node.setEnabled(true);
     if (q.has('layout')) placeForUser();                         // test the headset layout from the desktop camera
-    else xrPanel.node.position.set(-0.3, -0.03, 0);
+    else xrPanel.node.position.set(-0.3, -0.03 - xrPanel.barGap, 0);
     if (page) xrPanel.setPage(page);
   }
   await setupXR();
