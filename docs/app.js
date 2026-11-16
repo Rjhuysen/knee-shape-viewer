@@ -6,7 +6,7 @@
  */
 'use strict';
 const B = BABYLON, G = BABYLON.GUI;
-const VERSION = 5;   // shown in the UI so you can see whether the headset runs the latest version
+const VERSION = 6;   // shown in the UI so you can see whether the headset runs the latest version
 
 // ------------------------------------------------------------------ small vector helpers (SSM frame)
 const vsub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -390,32 +390,26 @@ function syncHTML(mm) {
 
 // ------------------------------------------------------------------ XR panel (Babylon GUI on a floating plane)
 function buildXRPanel() {
-  // HoloLens 2 sees only ~43° x 29°: keep the panel ~29° wide at 0.7 m. Texture: 1115 x 1300 px.
-  const W = 0.36, H = 0.42, RES = 1300;
-  // No dragging: the panel "lazily follows" the user (like HoloLens system menus). It stays still while it is in
-  // view and glides back when you turn away. "Pin" freezes it in place. Following pauses while a press is active.
+  // HoloLens 2 sees only ~43° x 29°: panel 0.30 x 0.35 m at ~0.8 m (~21° x 25°). Texture: 1115 x 1300 px.
+  const W = 0.30, H = 0.35, RES = 1300;
+  // No dragging. The panel is placed a little to the left of the bones, facing you (placePanel). It stays where it
+  // is while you work; only if it has been far out of view for a while (you turned away) is it brought back.
+  // "Pin" switches that off.
   const node = new B.TransformNode('panelNode', scene);
   node.rotationQuaternion = B.Quaternion.Identity();
   const plane = B.MeshBuilder.CreatePlane('panel', { width: W, height: H }, scene);
-  plane.parent = node; plane.position.x = -0.12;          // slightly left of the follow centre; model goes right
+  plane.parent = node;
   plane.isNearPickable = true;
   const adt = G.AdvancedDynamicTexture.CreateForMesh(plane, Math.round(RES * W / H), RES);
-  const follow = new B.FollowBehavior();
-  Object.assign(follow, { defaultDistance: 0.7, minimumDistance: 0.5, maximumDistance: 0.9, maxViewHorizontalDegrees: 35,
-                          maxViewVerticalDegrees: 25, ignoreCameraPitchAndRoll: true, lerpTime: 700 });
-  let pinned = false, pressing = false;
-  scene.onPointerObservable.add(pi => {
-    if (pi.type === B.PointerEventTypes.POINTERDOWN && pi.pickInfo && pi.pickInfo.pickedMesh === plane) pressing = true;
-    if (pi.type === B.PointerEventTypes.POINTERUP) pressing = false;
-    follow._enabled = !pinned && !pressing;
+  let pinned = false, outSince = 0;
+  scene.onBeforeRenderObservable.add(() => {
+    if (!inXR || pinned || !node.isEnabled()) { outSince = 0; return; }
+    const cam = scene.activeCamera, to = node.position.subtract(cam.globalPosition).normalize();
+    const ang = Math.acos(Math.max(-1, Math.min(1, B.Vector3.Dot(cam.getDirection(B.Axis.Z), to)))) * 180 / Math.PI;
+    if (ang < 55) { outSince = 0; return; }
+    if (!outSince) outSince = performance.now();
+    else if (performance.now() - outSince > 1500) { placePanel(); outSince = 0; }
   });
-  const startFollowing = cam => {
-    node.setEnabled(true);
-    if (!node.behaviors.includes(follow)) node.addBehavior(follow);
-    follow.followedCamera = cam;
-    follow._enabled = !pinned;
-  };
-  const stopFollowing = () => { node.removeBehavior(follow); node.setEnabled(false); };
 
   const bg = new G.Rectangle('bg');
   Object.assign(bg, { background: '#1a1e25ee', color: '#5fb3ff', thickness: 3, cornerRadius: 24 });
@@ -443,10 +437,10 @@ function buildXRPanel() {
   const title = txt(`Knee Shape Viewer  v${VERSION}`, '96px', 40); title.textHorizontalAlignment = G.Control.HORIZONTAL_ALIGNMENT_LEFT;
   title.paddingLeft = '16px';
   const pinBtn = btn('', '100%', '92px', () => {
-    pinned = !pinned; follow._enabled = !pinned; setPinLabel();
+    pinned = !pinned; setPinLabel();
   }, 34);
   const setPinLabel = () => {
-    pinBtn.textBlock.text = pinned ? '📌 Pinned (tap to follow)' : 'Pin panel here';
+    pinBtn.textBlock.text = pinned ? 'Pinned (tap to unpin)' : 'Pin panel here';
     pinBtn.background = pinned ? '#2f5d8a' : '#252b34';
   };
   setPinLabel();
@@ -540,7 +534,7 @@ function buildXRPanel() {
       content.addControl(rot);
       content.addControl(btn('Bring model and panel in front of me', '100%', '100px', placeForUser));
       content.addControl(txt('Grab the bones to move/rotate them (pinch and hold); use two hands to resize. ' +
-                             'This panel follows you; press "Pin panel here" to leave it in place.', '120px', 28, '#9aa3ad'));
+                             'If you turn away, this panel comes back after a moment; "Pin panel here" stops that.', '120px', 28, '#9aa3ad'));
       const mt = txt('', '110px', 30, '#e6e8eb'); mt.name = 'meshText'; content.addControl(mt);
     }
     if (lastMM) sync(lastMM);
@@ -560,7 +554,7 @@ function buildXRPanel() {
 
   render();
   node.setEnabled(false);
-  return { node, sync, render, startFollowing, stopFollowing, setPage(p) { page = p; render(); } };
+  return { node, sync, render, setPage(p) { page = p; render(); } };
 }
 
 function setModelScale(s) { root.scaling.setAll(0.001 * s); }
@@ -569,18 +563,27 @@ function turnModel(deg) {                    // rotate the bones about the verti
   root.rotationQuaternion = B.Quaternion.RotationAxis(B.Axis.Y, deg * Math.PI / 180).multiply(root.rotationQuaternion);
 }
 
-function placeForUser() {
+// Layout relative to the user's head (horizontal forward direction):
+//   bones: straight ahead, 1.2 m away, knee 5 cm below eye height (whole leg fits the ~29° vertical FOV at 1:2)
+//   panel: 0.75 m ahead, 0.32 m to the left (~23°), turned to face you; glance left to use it
+function headFrame() {
   const cam = scene.activeCamera;
   const fwd = cam.getDirection(B.Axis.Z); fwd.y = 0; fwd.normalize();
-  const right = B.Vector3.Cross(B.Axis.Y, fwd).normalize();
-  const head = cam.globalPosition.clone();
-  const yaw = Math.atan2(fwd.x, fwd.z);
-  root.position = head.add(fwd.scale(1.0)).add(right.scale(0.3)).add(new B.Vector3(0, -0.25, 0));
-  root.rotationQuaternion = B.Quaternion.FromEulerAngles(0, yaw, 0);
-  if (xrPanel) {
-    xrPanel.node.position = head.add(fwd.scale(0.7)).add(new B.Vector3(0, -0.05, 0));
-    xrPanel.node.rotationQuaternion = B.Quaternion.FromEulerAngles(0, yaw, 0);
-  }
+  return { head: cam.globalPosition.clone(), fwd, right: B.Vector3.Cross(B.Axis.Y, fwd).normalize() };
+}
+function facing(pos, head) { const d = pos.subtract(head); return B.Quaternion.FromEulerAngles(0, Math.atan2(d.x, d.z), 0); }
+function placePanel() {
+  if (!xrPanel) return;
+  const { head, fwd, right } = headFrame();
+  const pos = head.add(fwd.scale(0.75)).add(right.scale(-0.32)).add(new B.Vector3(0, -0.04, 0));
+  xrPanel.node.position = pos;
+  xrPanel.node.rotationQuaternion = facing(pos, head);
+}
+function placeForUser() {
+  const { head, fwd } = headFrame();
+  root.position = head.add(fwd.scale(1.2)).add(new B.Vector3(0, -0.05, 0));
+  root.rotationQuaternion = B.Quaternion.FromEulerAngles(0, Math.atan2(fwd.x, fwd.z), 0);
+  placePanel();
 }
 
 // ------------------------------------------------------------------ boot
@@ -668,8 +671,9 @@ async function main() {
   xrPanel = buildXRPanel();
   if (new URLSearchParams(location.search).has('panel')) {     // debug: show the HoloLens panel on desktop
     const q = new URLSearchParams(location.search), page = q.get('panel');
-    if (q.has('follow')) xrPanel.startFollowing(cam);          // test the lazy-follow behaviour with the desktop camera
-    else { xrPanel.node.setEnabled(true); xrPanel.node.position.set(-0.18, -0.03, 0); }
+    xrPanel.node.setEnabled(true);
+    if (q.has('layout')) placeForUser();                         // test the headset layout from the desktop camera
+    else xrPanel.node.position.set(-0.3, -0.03, 0);
     if (page) xrPanel.setPage(page);
   }
   await setupXR();
@@ -677,15 +681,17 @@ async function main() {
   document.getElementById('loading').remove();
   engine.runRenderLoop(() => scene.render());
   window.addEventListener('resize', () => engine.resize());
-  window.__viewer = { S, scene, preset, setInput, setActive, refresh };   // for debugging / tests
+  window.__viewer = { S, scene, preset, setInput, setActive, refresh, placeForUser, setModelScale };   // debugging / tests
 }
 
 async function setupXR() {
   const hint = document.getElementById('xrHint');
   let mode = null;
   try {
-    if (await B.WebXRSessionManager.IsSessionSupportedAsync('immersive-ar')) mode = 'immersive-ar';
-    else if (await B.WebXRSessionManager.IsSessionSupportedAsync('immersive-vr')) mode = 'immersive-vr';
+    // Prefer the exclusive 'immersive-vr' mode: on the HoloLens it hides the Edge window, and because the display
+    // is see-through (black = transparent) it still looks like AR. '?ar' forces 'immersive-ar'.
+    const order = new URLSearchParams(location.search).has('ar') ? ['immersive-ar', 'immersive-vr'] : ['immersive-vr', 'immersive-ar'];
+    for (const m of order) if (!mode && await B.WebXRSessionManager.IsSessionSupportedAsync(m)) mode = m;
   } catch (e) { /* no WebXR */ }
   if (!mode) {
     hint.textContent = window.isSecureContext ? 'WebXR not available in this browser. Open this page in Edge on the HoloLens 2 to view it in AR.'
@@ -707,12 +713,19 @@ async function setupXR() {
       scene.clearColor = new B.Color4(0, 0, 0, 0);   // transparent = see-through on HoloLens
       setModelScale(0.5);
       root.addBehavior(drag); root.addBehavior(pinch);
-      setTimeout(() => { placeForUser(); xrPanel.startFollowing(xrHelper.baseExperience.camera); }, 400);
+      // wait until head tracking delivers real poses (~20 frames), then lay out bones and panel
+      let frames = 0;
+      const obs = xrHelper.baseExperience.sessionManager.onXRFrameObservable.add(() => {
+        if (++frames < 20) return;
+        xrHelper.baseExperience.sessionManager.onXRFrameObservable.remove(obs);
+        xrPanel.node.setEnabled(true);
+        placeForUser();
+      });
     } else if (st === B.WebXRState.NOT_IN_XR && inXR) {
       inXR = false;
       scene.clearColor = new B.Color4(0.07, 0.08, 0.1, 1);
       root.removeBehavior(drag); root.removeBehavior(pinch);
-      xrPanel.stopFollowing();
+      xrPanel.node.setEnabled(false);
       root.position.setAll(0); root.rotationQuaternion = null; root.rotation.setAll(0); setModelScale(1);
     }
   });
