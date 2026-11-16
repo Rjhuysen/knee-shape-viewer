@@ -313,16 +313,16 @@ function refresh() {
 }
 
 function setActive(j, on) {
-  if (on) { S.input[j] = S.shown[j]; S.active.add(j); } else S.active.delete(j);
+  if (on) { S.input[j] = S.meta.measurements[j].mean; S.active.add(j); } else S.active.delete(j);   // always start at the mean
   refresh();
 }
-function setInput(j, v) { S.input[j] = v; if (!S.active.has(j)) S.active.add(j); refresh(); }
+function setInput(j, v) { S.input[j] = clampToRange(j, v); if (!S.active.has(j)) S.active.add(j); refresh(); }
 function preset(name) {
   const m = S.meta.measurements;
   if (name === 'best') S.active = new Set(S.meta.defaultActive.map(k => m.findIndex(x => x.key === k)));
   if (name === 'all') S.active = new Set(m.map((_, i) => i));
   if (name === 'none') S.active = new Set();
-  for (const j of S.active) S.input[j] = S.shown[j] ?? m[j].mean;
+  for (const j of S.active) S.input[j] = m[j].mean;
   refresh();
 }
 function resetValues() { S.meta.measurements.forEach((x, i) => { S.input[i] = x.mean; }); refresh(); }
@@ -334,7 +334,9 @@ function plausText() {
   if (p.d * p.d > p.q95) return ['warn', `${msg} — unusual combination (outside 95 % of cases).`];
   return ['ok', `${msg} — within the range of the training data.`];
 }
-const sliderRange = m => [m.min - 0.5 * m.sd, m.max + 0.5 * m.sd];
+// angles: mean ± 2 SD; lengths/distances (mm): observed range ± 0.5 SD
+const sliderRange = m => m.unit === '°' ? [m.mean - 2 * m.sd, m.mean + 2 * m.sd] : [m.min - 0.5 * m.sd, m.max + 0.5 * m.sd];
+const clampToRange = (j, v) => { const [lo, hi] = sliderRange(S.meta.measurements[j]); return Math.min(hi, Math.max(lo, v)); };
 const fmtVal = (v, m) => `${v.toFixed(m.unit === 'mm' && Math.abs(v) > 100 ? 0 : 1)} ${m.unit}`;
 
 // ------------------------------------------------------------------ HTML panel (desktop)
